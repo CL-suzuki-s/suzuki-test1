@@ -1,0 +1,275 @@
+amazon-linux-extras install ansible2　（ansibleインストール）
+
+vi /etc/ansible/roles/tomcat.yml　（ファイル作成）
+
+ansible-playbook -i /etc/ansible/hosts /etc/ansible/roles/tomcat.yml　（実行する時）
+
+- hosts: localhost
+  gather_facts: no
+
+  tasks:
+
+  - name: JDKインストール
+    shell: yum install -y java-11-amazon-corretto
+
+  - name: JDK移動
+    shell: mv /usr/lib/jvm/java-11-amazon-corretto.x86_64 /opt
+
+  - name: javaへのパスを通す
+    lineinfile:
+			dest: /root/.bash_profile
+			state: present
+      regexp: 'PATH=$PATH:$HOME/bin'
+      line: 'PATH=$PATH:$HOME/bin:/opt/java-11-amazon-corretto.x86_64/bin
+
+  - name: 一個上の動作を反映させる。うまくいかない場合はこの項目を削除しshell内の動作を後で実行
+		shell: ./root/.bash_profile
+
+  - name: tomcat用ユーザー作成
+    user:
+      name: tomcat
+      state: present
+			shell: /sbin/nologin
+
+  - name: tomcatダウンロード
+    get_url:
+      url: https://archive.apache.org/dist/tomcat/tomcat-9/v9.0.71/bin/apache-tomcat-9.0.71.tar.gz
+      dest: /usr/local/
+
+  - name: tomcat解凍&移動
+    unarchive:
+      remote_src: yes
+      src: /usr/local/apache-tomcat-9.0.71.tar.gz
+      dest: /usr/local/
+
+  - name: tomcatの所有者とグループをtomcatにする
+    file:
+      path: /usr/local/apache-tomcat-9.0.71
+      owner: tomcat
+      group: tomcat
+      recurse: yes
+
+  - name: tomcatシンボリックリンク
+    file:
+      state: link
+      src: /usr/local/apache-tomcat-9.0.71
+      dest: /usr/local/tomcat
+
+  - name: setenv.shを作成する
+    file:
+      path: /usr/local/tomcat/bin/setenv.sh
+      state: touch
+
+  - name: setenv.shファイル書き込み
+    lineinfile:
+      path: /usr/local/tomcat/bin/setenv.sh
+      state: present
+      line: '{{ item }}'
+    with_items:
+      - '#!/bin/sh'
+      - 'CATALINA_HOME=/usr/local/tomcat'
+      - 'JAVA_HOME=/opt/java-11-amazon-corretto.x86_64'
+      - 'JAVA_OPTS="-Xms128m -Xmx512m”'
+
+  - name: tomcat自動起動スクリプトファイルの作成
+    file:
+      path: /etc/systemd/system/tomcat.service
+      state: touch
+      owner: tomcat
+      group: tomcat
+      mode: "u=rwx,g=rw,o=rw"
+
+  - name: 自動起動スクリプトファイルに中身を追記
+    lineinfile:
+      path: /etc/systemd/system/tomcat.service
+      state: present
+      line: '{{ item }}'
+    with_items:
+      - '[Unit]'
+      - 'Description=Apache Tomcat 9'
+      - 'After=network.target'
+      - ' '
+      - '[Service]'
+      - 'User=tomcat'
+      - 'Group=tomcat'
+      - 'Type=oneshot'
+      - 'PIDFile=/usr/local/tomcat/tomcat.pid'
+      - 'RemainAfterExit=yes'
+      - ' '
+      - 'Environment=DB_SERVER=DB.curry.rplearn.local'
+      - 'Environment=DB_USER=postgres'
+      - 'Environment=MAIL_SERVER=web01.curry.rplearn.local'
+      - 'Environment=MAIL_PORT=25'
+      - ' '
+      - 'ExecStart=/usr/local/tomcat/bin/startup.sh'
+      - 'ExecStop=/usr/local/tomcat/bin/shutdown.sh'
+      - 'ExecReStart=/usr/local/tomcat/bin/shutdown.sh;/usr/local/tomcat/bin/startup.sh'
+      - ' '
+      - '[Install]'
+      - 'WantedBy=multi-user.target'
+
+  - name: tomcat自動起動スクリプトの権限を変更する
+    file:
+      path: /etc/systemd/system/tomcat.service
+      mode: 755
+
+- name: catalina.sh書き込み。下の二行だけでもいいかも
+    lineinfile:
+      path: /usr/local/tomcat/bin/catalina.sh
+      state: present
+      line: '{{ item }}'
+    with_items:
+      - ' '
+      - 'DB_SERVER=DB.curry.rplearn.local'
+      - 'MAIL_SERVER=web01.curry.rplearn.local'
+      - 'export DB_SERVER=DB.curry.rplearn.local'
+      - 'export MAIL_SERVER=web01.curry.rplearn.local'
+
+  - name: Tomcat自動起動有効化
+   shell: systemctl enable tomcat
+
+  - name: Tomcatをスタートする
+    systemd:
+      name: tomcat.service
+      state: started
+
+以下、Githubにファイルアップロードする手順(流れの中でjavaの人が作ったファイルec-202110cがAPサーバに置かれます。また環境構築自体はgithubと連携しなくても可能です。今はアップロード済なのでECサイト構築をしたいだけならこの手順を飛ばしgit cloneなどをするだけでも可)
+
+・まず鍵作成
+
+githubのための鍵を作成(質問出てきたら全てエンター)
+# ssh-keygen -t rsa
+
+公開鍵をgithubに保存　
+cat id_rsa.pub
+
+参考サイト↓
+https://qiita.com/youyonghua/items/5d7fb4c2a460eae4f2c0
+https://qiita.com/aki4000/items/4c81bc2747bbd5e96d85
+https://tusukuru.hatenablog.com/entry/2018/08/29/021651
+
+次にファイルをアップロード
+
+この後の操作については基本このサイトを参考に進めました↓
+https://itc.tokyo/best-environment/upload-to-github/
+
+まずは↑のサイトに沿ってブラウザ作業。それが終わったら↓
+
+avaの人が作ったファイル(ec-202110c)をwebサーバに置く
+macの場合は自分のpcのデスクトップに置いてからこれらを実行↓
+scp -r -i ~/Desktop/learnCL_01_key.pem ~/Desktop/learnCL_01_key.pem ec2-user@踏み台サーバのパブリックIP:/home/ec2-user
+scp -r -i ~/Desktop/learnCL_01_key.pem ~/Desktop/ec-202110c ec2-user@踏み台サーバのパブリックIP:/home/ec2-user
+
+その後WebサーバからAPサーバ2台とDBサーバにファイルを置く
+まず踏み台となるWebサーバに入った後↓
+scp -r -i /home/ec2-user/learnCL_01_key.pem /home/ec2-user/ec-202110c ec2-user@対象サーバのプライベートIP:/home/ec2-user
+
+一個前の手順でファイルを置いた/home/ec2-userに移動する
+# cd /home/ec2-user/ec-202110c
+
+# git init
+
+フォルダ全てをアップロード用に準備
+# git add .
+
+コメント付きで、対象のフォルダ・ファイルをコミット
+# git commit -m "ここにコメント"
+
+コミット先のブランチを「main」に設定
+# git branch -M main
+
+<git@~>の部分にはgithubリポジトリに表示されているアドレスをペースト
+git remote add origin <git@〜>
+
+ファイルをgithubにアップロード
+git push -u origin main
+
+ビルドするには
+# sh ./mvnw clean install -Dmaven.test.skip=true
+
+# mv /usr/local/tomcat/webapps/ec-202110c/target/curry.war /usr/local/tomcat/webapps
+
+# systemctl restart tomcat
+
+APサーバと各種サーバを連携させるには
+
+<aside>
+Webサーバに入る(ここでAPサーバとの連携と冗長化を設定)
+
+vi /etc/httpd/conf/httpd.conf
+
+で一番下に↓を追記
+
+Header add Set-Cookie "ROUTEID=.%{BALANCER_WORKER_ROUTE}e; path=/"  env=BALANCER_ROUTE_CHANGED
+
+<Proxy balancer://mycluster>
+
+BalancerMember http://AP01.curry.rplearn.local:8080/curry loadfactor=10 route=AP01
+
+BalancerMember http://AP02.curry.rplearn.local:8080/curry loadfactor=10 route=AP02
+
+ProxySet stickysession=ROUTEID
+
+ProxySet failonstatus=403,404,500
+
+</Proxy>
+
+ProxyRequests Off
+
+ProxyPass /curry balancer://mycluster
+
+ProxyPassReverse /curry balancer://mycluster
+
+</aside>
+
+<aside>
+
+DBサーバに入る(ここでAPサーバ・メールサーバそれぞれにDBへのアクセスを許可)
+IPの代わりにホスト名でもいける、はず
+
+vi /var/lib/pgsql/data/pg_hba.conf
+で一番下に↓を追記
+
+host    all             all             Web1サーバのプライベートIP/32         trust
+host    all             all             Web2サーバのプライベートIP/32        trust
+host    all             all             AP1サーバのプライベートIP/32         trust
+host    all             all             AP2サーバのプライベートIP/32         trust
+
+</aside>
+
+<aside>
+カレーのサイトデータをDBに入れ込んだ手順↓　
+
+psqlにログインする(postgresユーザーで、postgresデータベースの中に)
+
+# psql -U postgres -d postgres
+
+作成済のデータベース一覧を見るには
+
+# select datname, datdba, encoding, datcollate, datctype from pg_database;
+
+psqlからログアウトするには
+
+# exit
+
+ファイル流し込みの方法(javaの人から渡されたファイルの中にあるsql.txtのパスを指定。事前にgit cloneなどで、サーバ内にec-20210cを置いておく)
+
+# \i /home/ec2-user/ec-202110c/sql/sql.txt
+
+データベース内のテーブルを確認する
+
+# \dt
+
+\d users
+
+ちなみに↓
+
+テーブルを指定し、その中に格納されている情報を確認する方法(この場合usersを指定)
+
+# select * from users;
+
+テーブルの特定のデータを消す方法(テーブルを指定しidやnameやemailなどの項目を = で指定)
+
+# delete from users where name='鈴木';
+
+</aside>
